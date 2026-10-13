@@ -1,0 +1,19 @@
+# Entornos virtuales
+venv/
+.venv/
+env/
+
+# Archivos de caché de Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Bases de datos SQLite
+*.db
+*.sqlite
+*.sqlite3
+
+# Caché y reportes de pruebas
+.pytest_cache/
+.coverage
+htmlcov/
