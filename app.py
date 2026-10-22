@@ -2,13 +2,17 @@ from pathlib import Path
 from flask import Flask, jsonify
 from database import DEFAULT_DB_PATH, init_db, close_db
 from routes import bp
+from reloj import RelojSistema
+from validador import ValidadorDeAvistamiento
+from repositorio import RepositorioAvistamientosSQLite
+from servicio import ServicioAvistamientos
 
 
-def create_app(db_path=None):
+def create_app(db_path=None, reloj=None, repositorio=None, validador=None, servicio=None):
     """
     Fábrica de aplicaciones (Application Factory pattern).
-    Permite instanciar la app configurando una ruta de base de datos específica,
-    lo cual facilita enormemente la ejecución de pruebas con bases de datos temporales.
+    Permite instanciar la app configurando una ruta de base de datos específica e
+    inyectar dobles de prueba para reloj, repositorio, validador y servicio.
     """
     app = Flask(__name__)
 
@@ -21,6 +25,19 @@ def create_app(db_path=None):
 
     # Registro de la función de limpieza de conexiones al terminar cada petición
     app.teardown_appcontext(close_db)
+
+    # Inyección de dependencias (DIP)
+    reloj_instancia = reloj or RelojSistema()
+    validador_instancia = validador or ValidadorDeAvistamiento(reloj=reloj_instancia)
+    repo_instancia = repositorio or RepositorioAvistamientosSQLite()
+    servicio_instancia = servicio or ServicioAvistamientos(
+        repositorio=repo_instancia, validador=validador_instancia
+    )
+
+    app.config["RELOJ"] = reloj_instancia
+    app.config["VALIDADOR"] = validador_instancia
+    app.config["REPOSITORIO"] = repo_instancia
+    app.config["SERVICIO"] = servicio_instancia
 
     # Registro del blueprint con los endpoints de avistamientos
     app.register_blueprint(bp)

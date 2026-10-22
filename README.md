@@ -68,16 +68,38 @@ Consiste en una API RESTful desarrollada en Python con Flask para la gestión y 
 
 ## 3. Ejecución de Pruebas Automatizadas
 
-Las pruebas unitarias y de integración se ejecutan de forma aislada utilizando una base de datos SQLite temporal en memoria/directorio temporal proporcionada por el fixture `tmp_path` de `pytest`.
+El proyecto cuenta con dos niveles de pruebas automatizadas:
+- **Pruebas unitarias:** Prueban la lógica de negocio y validación de forma pura, rápida y aislada mediante dobles de prueba (Stub, Fake y Mock), sin tocar la base de datos ni levantar el servidor web.
+- **Pruebas de integración:** Prueban los endpoints HTTP completos utilizando el cliente de pruebas de Flask (`test_client`) y bases de datos SQLite temporales y aisladas proporcionadas por `tmp_path`.
 
 Con el entorno virtual activado, ejecutar:
+
+### Ejecutar solo las pruebas unitarias
+```bash
+pytest tests/test_unitarias.py -v
+```
+
+### Ejecutar solo las pruebas de integración
+```bash
+pytest tests/test_api.py -v
+```
+
+### Ejecutar toda la suite de pruebas
 ```bash
 pytest -v
 ```
-Para ver el resumen con detalle de cobertura y tiempos:
+Para ver el resumen con detalle de tiempos por prueba:
 ```bash
 pytest -v --durations=5
 ```
+
+### Medición de cobertura de código (sentencias y ramas)
+Para generar el reporte de cobertura completo midiendo sentencias y ramas (*branch coverage*):
+```bash
+pytest --cov=. --cov-branch --cov-report=term-missing --cov-report=html:docs/cobertura
+```
+- **Resumen en consola:** Muestra el porcentaje de cobertura de sentencias y ramas por módulo y las líneas pendientes.
+- **Reporte interactivo HTML:** Al ejecutar el comando, se genera el reporte navegable en `docs/cobertura/index.html`.
 
 ---
 
@@ -285,15 +307,22 @@ curl -X POST http://127.0.0.1:5000/avistamientos -H "Content-Type: application/j
 
 ```text
 Api/
-├── app.py              # Fábrica create_app(), configuración y manejadores de error globales
+├── app.py              # Fábrica create_app(), inyección de dependencias y manejadores HTTP
 ├── database.py         # Conexión get_db(), cierre close_db() e inicialización init_db()
-├── routes.py           # Blueprint de Flask con endpoints y funciones de validación
-├── requirements.txt    # Dependencias mínimas (Flask, pytest)
+├── reloj.py            # Abstracción Reloj (Protocol) y RelojSistema de producción
+├── validador.py        # ValidadorDeAvistamiento (lógica pura de validación de negocio)
+├── repositorio.py      # RepositorioAvistamientos (Protocol) y RepositorioAvistamientosSQLite
+├── servicio.py         # ServicioAvistamientos (orquestación y persistencia desacoplada)
+├── routes.py           # Blueprint de Flask con controladores HTTP
+├── requirements.txt    # Dependencias mínimas (Flask, pytest, pytest-cov)
 ├── .gitignore          # Exclusión de venv, __pycache__, bases .db y caché de pytest
-├── README.md           # Documentación técnica, guía de uso y ejemplos
+├── README.md           # Documentación técnica, comandos y ejemplos con curl
+├── docs/               # Documento único de justificación de pruebas
+│   └── justificacion-pruebas.md
 └── tests/
     ├── __init__.py     # Inicializador del paquete de pruebas
-    └── test_api.py     # Suite de pruebas unitarias y de integración con pytest
+    ├── test_unitarias.py # Pruebas unitarias con dobles (Stub, Fake, Mock) y TDD
+    └── test_api.py     # Pruebas de integración por HTTP con SQLite temporal
 ```
 
 ---

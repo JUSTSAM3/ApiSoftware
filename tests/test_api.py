@@ -1,15 +1,18 @@
+from datetime import date
 import pytest
 from app import create_app
+from tests.test_unitarias import RelojFijo
 
 
 @pytest.fixture
 def client(tmp_path):
     """
     Fixture de pytest que crea una instancia de la aplicación Flask
-    utilizando una base de datos SQLite temporal y aislada en cada prueba.
+    utilizando una base de datos SQLite temporal y aislada en cada prueba
+    y un reloj fijo congelado en 2026-10-21 para determinismo en pruebas temporales.
     """
     db_file = tmp_path / "test_avistamientos.db"
-    app = create_app(db_path=db_file)
+    app = create_app(db_path=db_file, reloj=RelojFijo(date(2026, 10, 21)))
     app.config["TESTING"] = True
     with app.test_client() as test_client:
         yield test_client
@@ -325,3 +328,122 @@ def test_metodo_no_permitido_devuelve_405_json(client):
     assert response.headers["Content-Type"] == "application/json"
     data = response.get_json()
     assert "error" in data
+
+
+# ==========================================
+# 6. Pruebas de integración para la regla de negocio nueva (POST y PUT)
+# ==========================================
+
+def test_post_rechaza_especie_corta_regla_nueva(client):
+    """Verifica que POST con especie de 2 caracteres responda 400 nombrando 'especie'."""
+    # Arrange
+    payload = {
+        "especie": "ab",
+        "lugar": "Jardín Botánico",
+        "fecha": "2026-10-21",
+        "observador": "Carlos Ruiz"
+    }
+
+    # Act
+    response = client.post("/avistamientos", json=payload)
+
+    # Assert
+    assert response.status_code == 400
+    assert response.headers["Content-Type"] == "application/json"
+    assert "especie" in response.get_json()["error"]
+
+    # Efecto: la tabla sigue vacía
+    res_get = client.get("/avistamientos")
+    assert res_get.get_json() == []
+
+
+def test_post_rechaza_fecha_futura_regla_nueva(client):
+    """Verifica que POST con fecha posterior a hoy responda 400 nombrando 'fecha'."""
+    # Arrange
+    payload = {
+        "especie": "colibrí",
+        "lugar": "Jardín Botánico",
+        "fecha": "2026-10-22",
+        "observador": "Carlos Ruiz"
+    }
+
+    # Act
+    response = client.post("/avistamientos", json=payload)
+
+    # Assert
+    assert response.status_code == 400
+    assert response.headers["Content-Type"] == "application/json"
+    assert "fecha" in response.get_json()["error"]
+
+
+def test_post_rechaza_lugar_vacio_regla_nueva(client):
+    """Verifica que POST con lugar vacío responda 400 nombrando 'lugar'."""
+    # Arrange
+    payload = {
+        "especie": "colibrí",
+        "lugar": "   ",
+        "fecha": "2026-10-21",
+        "observador": "Carlos Ruiz"
+    }
+
+    # Act
+    response = client.post("/avistamientos", json=payload)
+
+    # Assert
+    assert response.status_code == 400
+    assert response.headers["Content-Type"] == "application/json"
+    assert "lugar" in response.get_json()["error"]
+
+
+def test_put_rechaza_especie_corta_regla_nueva(client):
+    """Verifica que PUT a recurso existente con especie de 2 caracteres responda 400."""
+    # Arrange: crear recurso previo
+    post_res = client.post("/avistamientos", json={
+        "especie": "gaviota",
+        "lugar": "Puerto",
+        "fecha": "2026-10-20",
+        "observador": "Raúl"
+    })
+    item_id = post_res.get_json()["id"]
+
+    # Act
+    put_res = client.put(f"/avistamientos/{item_id}", json={
+        "especie": "ab",
+        "lugar": "Puerto",
+        "fecha": "2026-10-20",
+        "observador": "Raúl"
+    })
+
+    # Assert
+    assert put_res.status_code == 400
+    assert put_res.headers["Content-Type"] == "application/json"
+    assert "especie" in put_res.get_json()["error"]
+
+    # Efecto: los datos en la base no se alteraron
+    get_res = client.get(f"/avistamientos/{item_id}")
+    assert get_res.get_json()["especie"] == "gaviota"
+
+
+def test_put_rechaza_fecha_futura_regla_nueva(client):
+    """Verifica que PUT a recurso existente con fecha futura responda 400."""
+    # Arrange
+    post_res = client.post("/avistamientos", json={
+        "especie": "gaviota",
+        "lugar": "Puerto",
+        "fecha": "2026-10-20",
+        "observador": "Raúl"
+    })
+    item_id = post_res.get_json()["id"]
+
+    # Act
+    put_res = client.put(f"/avistamientos/{item_id}", json={
+        "especie": "gaviota",
+        "lugar": "Puerto",
+        "fecha": "2026-10-22",
+        "observador": "Raúl"
+    })
+
+    # Assert
+    assert put_res.status_code == 400
+    assert put_res.headers["Content-Type"] == "application/json"
+    assert "fecha" in put_res.get_json()["error"]

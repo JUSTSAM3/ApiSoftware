@@ -1,10 +1,27 @@
 from datetime import datetime
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, current_app
 from database import get_db
 
 bp = Blueprint("avistamientos", __name__)
 
 CAMPOS_REQUERIDOS = ["especie", "lugar", "fecha", "observador"]
+
+
+def get_servicio():
+    """Obtiene el servicio configurado en la aplicación Flask o crea uno por defecto."""
+    if current_app:
+        servicio = current_app.config.get("SERVICIO")
+        if servicio is not None:
+            return servicio
+    from repositorio import RepositorioAvistamientosSQLite
+    from servicio import ServicioAvistamientos
+    from validador import ValidadorDeAvistamiento
+    from reloj import RelojSistema
+
+    return ServicioAvistamientos(
+        repositorio=RepositorioAvistamientosSQLite(),
+        validador=ValidadorDeAvistamiento(reloj=RelojSistema()),
+    )
 
 
 def validar_fecha(fecha_str):
@@ -61,13 +78,8 @@ def validar_datos_avistamiento(data):
 @bp.route("/avistamientos", methods=["GET"])
 def listar_avistamientos():
     """Lista todos los avistamientos registrados ordenados por id."""
-    db = get_db()
-    cursor = db.cursor()
-    cursor.execute("SELECT id, especie, lugar, fecha, observador FROM avistamientos ORDER BY id ASC")
-    filas = cursor.fetchall()
-    
-    # Convertimos cada fila de sqlite3.Row a diccionario de Python
-    resultado = [dict(fila) for fila in filas]
+    servicio = get_servicio()
+    resultado = servicio.listar_todos()
     return jsonify(resultado), 200
 
 
@@ -77,33 +89,20 @@ def resumen_avistamientos():
     Retorna la cantidad de avistamientos agrupados por especie.
     Ejemplo de respuesta: {"colibrí": 3, "águila": 1}
     """
-    db = get_db()
-    cursor = db.cursor()
-    cursor.execute("""
-        SELECT especie, COUNT(*) AS cantidad
-        FROM avistamientos
-        GROUP BY especie
-        ORDER BY cantidad DESC
-    """)
-    filas = cursor.fetchall()
-    
-    # Creamos un diccionario asociando especie -> cantidad
-    resumen = {fila["especie"]: fila["cantidad"] for fila in filas}
+    servicio = get_servicio()
+    resumen = servicio.obtener_resumen()
     return jsonify(resumen), 200
 
 
 @bp.route("/avistamientos/<int:id>", methods=["GET"])
 def obtener_avistamiento(id):
     """Obtiene el detalle de un avistamiento específico por su ID."""
-    db = get_db()
-    cursor = db.cursor()
-    cursor.execute("SELECT id, especie, lugar, fecha, observador FROM avistamientos WHERE id = ?", (id,))
-    fila = cursor.fetchone()
-    
-    if fila is None:
+    servicio = get_servicio()
+    item = servicio.obtener_por_id(id)
+    if item is None:
         return jsonify({"error": f"No se encontró el avistamiento con id {id}."}), 404
 
-    return jsonify(dict(fila)), 200
+    return jsonify(item), 200
 
 
 @bp.route("/avistamientos", methods=["POST"])
@@ -115,39 +114,27 @@ def crear_avistamiento():
     if error:
         return jsonify({"error": error}), 400
 
-    db = get_db()
-    cursor = db.cursor()
-    cursor.execute(
-        """
-        INSERT INTO avistamientos (especie, lugar, fecha, observador)
-        VALUES (?, ?, ?, ?)
-        """,
-        (
-            datos_validados["especie"],
-            datos_validados["lugar"],
-            datos_validados["fecha"],
-            datos_validados["observador"]
-        )
-    )
-    db.commit()
+    servicio = get_servicio()
+    if servicio.validador:
+        errores_negocio = servicio.validador.validar(datos_validados)
+        if errores_negocio:
+            primer_error = errores_negocio[0]
+            mensaje = primer_error.get(
+                "mensaje", f"El campo '{primer_error.get('campo')}' es inválido."
+            )
+            return jsonify({"error": mensaje}), 400
 
-    nuevo_id = cursor.lastrowid
-    nuevo_avistamiento = {
-        "id": nuevo_id,
-        **datos_validados
-    }
+    nuevo_avistamiento = servicio.crear(datos_validados)
     return jsonify(nuevo_avistamiento), 201
 
 
 @bp.route("/avistamientos/<int:id>", methods=["PUT"])
 def actualizar_avistamiento(id):
     """Actualiza por completo los datos de un avistamiento existente."""
-    db = get_db()
-    cursor = db.cursor()
+    servicio = get_servicio()
 
     # Verificamos si el recurso a actualizar existe en la base de datos
-    cursor.execute("SELECT id FROM avistamientos WHERE id = ?", (id,))
-    if cursor.fetchone() is None:
+    if servicio.obtener_por_id(id) is None:
         return jsonify({"error": f"No se encontró el avistamiento con id {id}."}), 404
 
     # Validamos los nuevos datos enviados en el cuerpo
@@ -156,41 +143,26 @@ def actualizar_avistamiento(id):
     if error:
         return jsonify({"error": error}), 400
 
-    cursor.execute(
-        """
-        UPDATE avistamientos
-        SET especie = ?, lugar = ?, fecha = ?, observador = ?
-        WHERE id = ?
-        """,
-        (
-            datos_validados["especie"],
-            datos_validados["lugar"],
-            datos_validados["fecha"],
-            datos_validados["observador"],
-            id
-        )
-    )
-    db.commit()
+    if servicio.validador:
+        errores_negocio = servicio.validador.validar(datos_validados)
+        if errores_negocio:
+            primer_error = errores_negocio[0]
+            mensaje = primer_error.get(
+                "mensaje", f"El campo '{primer_error.get('campo')}' es inválido."
+            )
+            return jsonify({"error": mensaje}), 400
 
-    avistamiento_actualizado = {
-        "id": id,
-        **datos_validados
-    }
+    avistamiento_actualizado = servicio.actualizar(id, datos_validados)
     return jsonify(avistamiento_actualizado), 200
 
 
 @bp.route("/avistamientos/<int:id>", methods=["DELETE"])
 def eliminar_avistamiento(id):
     """Elimina un avistamiento por su ID."""
-    db = get_db()
-    cursor = db.cursor()
-
-    cursor.execute("SELECT id FROM avistamientos WHERE id = ?", (id,))
-    if cursor.fetchone() is None:
+    servicio = get_servicio()
+    eliminado = servicio.eliminar(id)
+    if not eliminado:
         return jsonify({"error": f"No se encontró el avistamiento con id {id}."}), 404
-
-    cursor.execute("DELETE FROM avistamientos WHERE id = ?", (id,))
-    db.commit()
 
     # La respuesta 204 No Content se envía sin cuerpo
     return "", 204
